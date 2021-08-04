@@ -8,6 +8,8 @@ namespace StbTrueType
         public static void Main()
         {
             var font = new STBTT.stbtt_fontinfo();
+            int w, h, xoff, yoff;
+            int c = (int)'a', s = 20;
 
             using (var f = File.OpenRead("arialbd.ttf"))
             {
@@ -17,15 +19,15 @@ namespace StbTrueType
                 STBTT.InitFont(font, buf, STBTT.GetFontOffsetForIndex(buf, 0));
             }
 
-            Console.WriteLine(font.numGlyphs);
-            Console.WriteLine(font.loca);
-            Console.WriteLine(font.head);
-            Console.WriteLine(font.glyf);
-            Console.WriteLine(font.hhea);
-            Console.WriteLine(font.hmtx);
-            Console.WriteLine(font.kern);
-            Console.WriteLine(font.gpos);
-            Console.WriteLine(font.svg);
+            var bitmap = STBTT.stbtt_GetCodepointBitmap(font, 0, STBTT.stbtt_ScaleForPixelHeight(font, s), c, out w, out h, out xoff, out yoff);
+
+            var span = bitmap.Span;
+            for (int j = 0; j < h; ++j)
+            {
+                for (int i = 0; i < w; ++i)
+                    Console.Write(" .:ioVM@"[span[j * w + i] >> 5]);
+                Console.Write('\n');
+            }
         }
     }
 }
