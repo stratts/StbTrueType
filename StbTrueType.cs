@@ -796,9 +796,9 @@ namespace StbTrueType
                         else
                         {
                             mtx[4] = ttCHAR(comp);
-                            comp = comp.Slice(2);
+                            comp = comp.Slice(1);
                             mtx[5] = ttCHAR(comp);
-                            comp = comp.Slice(2);
+                            comp = comp.Slice(1);
                         }
                     }
                     else
@@ -808,27 +808,27 @@ namespace StbTrueType
                     }
                     if ((flags & (1 << 3)) != 0)
                     { // WE_HAVE_A_SCALE
-                        mtx[0] = mtx[3] = ttSHORT(comp) / 16384.0f;
+                        mtx[0] = mtx[3] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
                         mtx[1] = mtx[2] = 0;
                     }
                     else if ((flags & (1 << 6)) != 0)
                     { // WE_HAVE_AN_X_AND_YSCALE
-                        mtx[0] = ttSHORT(comp) / 16384.0f;
+                        mtx[0] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
                         mtx[1] = mtx[2] = 0;
-                        mtx[3] = ttSHORT(comp) / 16384.0f;
+                        mtx[3] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
                     }
                     else if ((flags & (1 << 7)) != 0)
                     { // WE_HAVE_A_TWO_BY_TWO
-                        mtx[0] = ttSHORT(comp) / 16384.0f;
+                        mtx[0] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
-                        mtx[1] = ttSHORT(comp) / 16384.0f;
+                        mtx[1] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
-                        mtx[2] = ttSHORT(comp) / 16384.0f;
+                        mtx[2] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
-                        mtx[3] = ttSHORT(comp) / 16384.0f;
+                        mtx[3] = (float)ttSHORT(comp) / 16384.0f;
                         comp = comp.Slice(2);
                     }
 
@@ -858,8 +858,8 @@ namespace StbTrueType
                         tmp = new stbtt_vertex[num_vertices + comp_num_verts];
 
                         if (num_vertices > 0 && vertices != null)
-                            tmp.CopyTo(vertices, 0);
-                        tmp.AsSpan().Slice(num_vertices).CopyTo(comp_verts);
+                            vertices.AsSpan(0, num_vertices).CopyTo(tmp);
+                        comp_verts.AsSpan(0, comp_num_verts).CopyTo(tmp.AsSpan(num_vertices));
                         vertices = tmp;
                         num_vertices += comp_num_verts;
                     }
