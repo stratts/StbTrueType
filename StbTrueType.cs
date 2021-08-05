@@ -920,6 +920,33 @@ namespace StbTrueType
             return stbtt_GetGlyphBitmapSubpixel(info, scale_x, scale_y, shift_x, shift_y, stbtt_FindGlyphIndex(info, codepoint), out width, out height, out xoff, out yoff);
         }
 
+        public static void stbtt_GetCodepointBitmapBoxSubpixel(stbtt_fontinfo font, int codepoint, float scale_x, float scale_y, float shift_x, float shift_y, out int ix0, out int iy0, out int ix1, out int iy1)
+        {
+            stbtt_GetGlyphBitmapBoxSubpixel(font, stbtt_FindGlyphIndex(font, codepoint), scale_x, scale_y, shift_x, shift_y, out ix0, out iy0, out ix1, out iy1);
+        }
+
+        public static void stbtt_MakeCodepointBitmapSubpixel(stbtt_fontinfo info, Memory<byte> output, int out_w, int out_h, int out_stride, float scale_x, float scale_y, float shift_x, float shift_y, int codepoint)
+        {
+            stbtt_MakeGlyphBitmapSubpixel(info, output, out_w, out_h, out_stride, scale_x, scale_y, shift_x, shift_y, stbtt_FindGlyphIndex(info, codepoint));
+        }
+
+        static void stbtt_MakeGlyphBitmapSubpixel(stbtt_fontinfo info, Memory<byte> output, int out_w, int out_h, int out_stride, float scale_x, float scale_y, float shift_x, float shift_y, int glyph)
+        {
+            int ix0, iy0;
+            stbtt_vertex[] vertices;
+            int num_verts = stbtt_GetGlyphShape(info, glyph, out vertices);
+            stbtt__bitmap gbm;
+
+            stbtt_GetGlyphBitmapBoxSubpixel(info, glyph, scale_x, scale_y, shift_x, shift_y, out ix0, out iy0, out _, out _);
+            gbm.pixels = output;
+            gbm.w = out_w;
+            gbm.h = out_h;
+            gbm.stride = out_stride;
+
+            if (gbm.w != 0 && gbm.h != 0)
+                stbtt_Rasterize(ref gbm, 0.35f, vertices, num_verts, scale_x, scale_y, shift_x, shift_y, ix0, iy0, true);
+        }
+
         static Memory<byte> stbtt_GetGlyphBitmapSubpixel(stbtt_fontinfo info, float scale_x, float scale_y, float shift_x, float shift_y, int glyph, out int width, out int height, out int xoff, out int yoff)
         {
             int ix0, iy0, ix1, iy1;
@@ -1460,6 +1487,331 @@ namespace StbTrueType
             if (windings != null)
             {
                 stbtt__rasterize(ref result, windings, winding_lengths, winding_count, scale_x, scale_y, shift_x, shift_y, x_off, y_off, invert);
+            }
+        }
+
+        public static int stbtt_GetCodepointKernAdvance(stbtt_fontinfo info, int ch1, int ch2)
+        {
+            if (info.kern == 0 && info.gpos == 0) // if no kerning table, don't waste time looking up both codepoint.glyphs
+                return 0;
+            return stbtt_GetGlyphKernAdvance(info, stbtt_FindGlyphIndex(info, ch1), stbtt_FindGlyphIndex(info, ch2));
+        }
+
+        static int stbtt_GetGlyphKernAdvance(stbtt_fontinfo info, int g1, int g2)
+        {
+            int xAdvance = 0;
+
+            if (info.gpos != 0)
+                xAdvance += stbtt__GetGlyphGPOSInfoAdvance(info, g1, g2);
+            else if (info.kern != 0)
+                xAdvance += stbtt__GetGlyphKernInfoAdvance(info, g1, g2);
+
+            return xAdvance;
+        }
+
+        static int stbtt__GetGlyphKernInfoAdvance(stbtt_fontinfo info, int glyph1, int glyph2)
+        {
+            Memory<byte> data = info.data.Slice(info.kern);
+            uint needle, straw;
+            int l, r, m;
+
+            // we only look at the first table. it must be 'horizontal' and format 0.
+            if (info.kern == 0)
+                return 0;
+            if (ttUSHORT(data.Slice(2)) < 1) // number of tables, need at least 1
+                return 0;
+            if (ttUSHORT(data.Slice(8)) != 1) // horizontal flag must be set in format
+                return 0;
+
+            l = 0;
+            r = ttUSHORT(data.Slice(10)) - 1;
+            needle = (uint)(glyph1 << 16 | glyph2);
+            while (l <= r)
+            {
+                m = (l + r) >> 1;
+                straw = ttULONG(data.Slice(18 + (m * 6))); // note: unaligned read
+                if (needle < straw)
+                    r = m - 1;
+                else if (needle > straw)
+                    l = m + 1;
+                else
+                    return ttSHORT(data.Slice(22 + (m * 6)));
+            }
+            return 0;
+        }
+
+        static int stbtt__GetGlyphGPOSInfoAdvance(stbtt_fontinfo info, int glyph1, int glyph2)
+        {
+            ushort lookupListOffset;
+            Memory<byte> lookupList;
+            ushort lookupCount;
+            Memory<byte> data;
+            int i, sti;
+
+            if (info.gpos == 0)
+                return 0;
+
+            data = info.data.Slice(info.gpos);
+
+            if (ttUSHORT(data.Slice(0)) != 1)
+                return 0; // Major version 1
+            if (ttUSHORT(data.Slice(2)) != 0)
+                return 0; // Minor version 0
+
+            lookupListOffset = ttUSHORT(data.Slice(8));
+            lookupList = data.Slice(lookupListOffset);
+            lookupCount = ttUSHORT(lookupList);
+
+            for (i = 0; i < lookupCount; ++i)
+            {
+                ushort lookupOffset = ttUSHORT(lookupList.Slice(2 + 2 * i));
+                Memory<byte> lookupTable = lookupList.Slice(lookupOffset);
+
+                ushort lookupType = ttUSHORT(lookupTable);
+                ushort subTableCount = ttUSHORT(lookupTable.Slice(4));
+                Memory<byte> subTableOffsets = lookupTable.Slice(6);
+                if (lookupType != 2) // Pair Adjustment Positioning Subtable
+                    continue;
+
+                for (sti = 0; sti < subTableCount; sti++)
+                {
+                    ushort subtableOffset = ttUSHORT(subTableOffsets.Slice(2 * sti));
+                    Memory<byte> table = lookupTable.Slice(subtableOffset);
+                    ushort posFormat = ttUSHORT(table);
+                    ushort coverageOffset = ttUSHORT(table.Slice(2));
+                    int coverageIndex = stbtt__GetCoverageIndex(table.Slice(coverageOffset), glyph1);
+                    if (coverageIndex == -1)
+                        continue;
+
+                    switch (posFormat)
+                    {
+                        case 1:
+                            {
+                                int l, r, m;
+                                int straw, needle;
+                                ushort valueFormat1 = ttUSHORT(table.Slice(4));
+                                ushort valueFormat2 = ttUSHORT(table.Slice(6));
+                                if (valueFormat1 == 4 && valueFormat2 == 0)
+                                { // Support more formats?
+                                    int valueRecordPairSizeInBytes = 2;
+                                    ushort pairSetCount = ttUSHORT(table.Slice(8));
+                                    ushort pairPosOffset = ttUSHORT(table.Slice(10 + 2 * coverageIndex));
+                                    Memory<byte> pairValueTable = table.Slice(pairPosOffset);
+                                    ushort pairValueCount = ttUSHORT(pairValueTable);
+                                    Memory<byte> pairValueArray = pairValueTable.Slice(2);
+
+                                    if (coverageIndex >= pairSetCount)
+                                        return 0;
+
+                                    needle = glyph2;
+                                    r = pairValueCount - 1;
+                                    l = 0;
+
+                                    // Binary search.
+                                    while (l <= r)
+                                    {
+                                        ushort secondGlyph;
+                                        Memory<byte> pairValue;
+                                        m = (l + r) >> 1;
+                                        pairValue = pairValueArray.Slice((2 + valueRecordPairSizeInBytes) * m);
+                                        secondGlyph = ttUSHORT(pairValue);
+                                        straw = secondGlyph;
+                                        if (needle < straw)
+                                            r = m - 1;
+                                        else if (needle > straw)
+                                            l = m + 1;
+                                        else
+                                        {
+                                            short xAdvance = ttSHORT(pairValue.Slice(2));
+                                            return xAdvance;
+                                        }
+                                    }
+                                }
+                                else
+                                    return 0;
+                                break;
+                            }
+
+                        case 2:
+                            {
+                                ushort valueFormat1 = ttUSHORT(table.Slice(4));
+                                ushort valueFormat2 = ttUSHORT(table.Slice(6));
+                                if (valueFormat1 == 4 && valueFormat2 == 0)
+                                { // Support more formats?
+                                    ushort classDef1Offset = ttUSHORT(table.Slice(8));
+                                    ushort classDef2Offset = ttUSHORT(table.Slice(10));
+                                    int glyph1class = stbtt__GetGlyphClass(table.Slice(classDef1Offset), glyph1);
+                                    int glyph2class = stbtt__GetGlyphClass(table.Slice(classDef2Offset), glyph2);
+
+                                    ushort class1Count = ttUSHORT(table.Slice(12));
+                                    ushort class2Count = ttUSHORT(table.Slice(14));
+                                    Memory<byte> class1Records, class2Records;
+                                    short xAdvance;
+
+                                    if (glyph1class < 0 || glyph1class >= class1Count)
+                                        return 0; // malformed
+                                    if (glyph2class < 0 || glyph2class >= class2Count)
+                                        return 0; // malformed
+
+                                    class1Records = table.Slice(16);
+                                    class2Records = class1Records.Slice(2 * (glyph1class * class2Count));
+                                    xAdvance = ttSHORT(class2Records.Slice(2 * glyph2class));
+                                    return xAdvance;
+                                }
+                                else
+                                    return 0;
+                                //break;
+                            }
+
+                        default:
+                            return 0; // Unsupported position format
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        public static int stbtt__GetCoverageIndex(Memory<byte> coverageTable, int glyph)
+        {
+            ushort coverageFormat = ttUSHORT(coverageTable);
+            switch (coverageFormat)
+            {
+                case 1:
+                    {
+                        ushort glyphCount = ttUSHORT(coverageTable.Slice(2));
+
+                        // Binary search.
+                        int l = 0, r = glyphCount - 1, m;
+                        int straw, needle = glyph;
+                        while (l <= r)
+                        {
+                            Memory<byte> glyphArray = coverageTable.Slice(4);
+                            ushort glyphID;
+                            m = (l + r) >> 1;
+                            glyphID = ttUSHORT(glyphArray.Slice(2 * m));
+                            straw = glyphID;
+                            if (needle < straw)
+                                r = m - 1;
+                            else if (needle > straw)
+                                l = m + 1;
+                            else
+                            {
+                                return m;
+                            }
+                        }
+                        break;
+                    }
+
+                case 2:
+                    {
+                        ushort rangeCount = ttUSHORT(coverageTable.Slice(2));
+                        Memory<byte> rangeArray = coverageTable.Slice(4);
+
+                        // Binary search.
+                        int l = 0, r = rangeCount - 1, m;
+                        int strawStart, strawEnd, needle = glyph;
+                        while (l <= r)
+                        {
+                            Memory<byte> rangeRecord;
+                            m = (l + r) >> 1;
+                            rangeRecord = rangeArray.Slice(6 * m);
+                            strawStart = ttUSHORT(rangeRecord);
+                            strawEnd = ttUSHORT(rangeRecord.Slice(2));
+                            if (needle < strawStart)
+                                r = m - 1;
+                            else if (needle > strawEnd)
+                                l = m + 1;
+                            else
+                            {
+                                ushort startCoverageIndex = ttUSHORT(rangeRecord.Slice(4));
+                                return startCoverageIndex + glyph - strawStart;
+                            }
+                        }
+                        break;
+                    }
+
+                default:
+                    return -1; // unsupported
+            }
+
+            return -1;
+        }
+
+        static int stbtt__GetGlyphClass(Memory<byte> classDefTable, int glyph)
+        {
+            ushort classDefFormat = ttUSHORT(classDefTable);
+            switch (classDefFormat)
+            {
+                case 1:
+                    {
+                        ushort startGlyphID = ttUSHORT(classDefTable.Slice(2));
+                        ushort glyphCount = ttUSHORT(classDefTable.Slice(4));
+                        Memory<byte> classDef1ValueArray = classDefTable.Slice(6);
+
+                        if (glyph >= startGlyphID && glyph < startGlyphID + glyphCount)
+                            return (int)ttUSHORT(classDef1ValueArray.Slice(2 * (glyph - startGlyphID)));
+                        break;
+                    }
+
+                case 2:
+                    {
+                        ushort classRangeCount = ttUSHORT(classDefTable.Slice(2));
+                        Memory<byte> classRangeRecords = classDefTable.Slice(4);
+
+                        // Binary search.
+                        int l = 0, r = classRangeCount - 1, m;
+                        int strawStart, strawEnd, needle = glyph;
+                        while (l <= r)
+                        {
+                            Memory<byte> classRangeRecord;
+                            m = (l + r) >> 1;
+                            classRangeRecord = classRangeRecords.Slice(6 * m);
+                            strawStart = ttUSHORT(classRangeRecord);
+                            strawEnd = ttUSHORT(classRangeRecord.Slice(2));
+                            if (needle < strawStart)
+                                r = m - 1;
+                            else if (needle > strawEnd)
+                                l = m + 1;
+                            else
+                                return (int)ttUSHORT(classRangeRecord.Slice(4));
+                        }
+                        break;
+                    }
+
+                default:
+                    return -1; // Unsupported definition type, return an error.
+            }
+
+            // "All glyphs not assigned to a class fall into class 0". (OpenType spec)
+            return 0;
+        }
+
+
+        public static void stbtt_GetFontVMetrics(stbtt_fontinfo info, out int ascent, out int descent, out int lineGap)
+        {
+            ascent = ttSHORT(info.data.Slice(info.hhea + 4));
+            descent = ttSHORT(info.data.Slice(info.hhea + 6));
+            lineGap = ttSHORT(info.data.Slice(info.hhea + 8));
+        }
+
+        public static void stbtt_GetCodepointHMetrics(stbtt_fontinfo info, int codepoint, out int advanceWidth, out int leftSideBearing)
+        {
+            stbtt_GetGlyphHMetrics(info, stbtt_FindGlyphIndex(info, codepoint), out advanceWidth, out leftSideBearing);
+        }
+
+        public static void stbtt_GetGlyphHMetrics(stbtt_fontinfo info, int glyph_index, out int advanceWidth, out int leftSideBearing)
+        {
+            ushort numOfLongHorMetrics = ttUSHORT(info.data.Slice(info.hhea + 34));
+            if (glyph_index < numOfLongHorMetrics)
+            {
+                advanceWidth = ttSHORT(info.data.Slice(info.hmtx + 4 * glyph_index));
+                leftSideBearing = ttSHORT(info.data.Slice(info.hmtx + 4 * glyph_index + 2));
+            }
+            else
+            {
+                advanceWidth = ttSHORT(info.data.Slice(info.hmtx + 4 * (numOfLongHorMetrics - 1)));
+                leftSideBearing = ttSHORT(info.data.Slice(info.hmtx + 4 * numOfLongHorMetrics + 2 * (glyph_index - numOfLongHorMetrics)));
             }
         }
 
